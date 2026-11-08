@@ -1,0 +1,20 @@
+﻿{
+  "port": 8080,
+  "nasRootPath": "C:\\Temp\\MockNAS",
+  "apps": [
+    {
+      "id": "filemanager",
+      "name": "ファイル管理",
+      "description": "NAS上の共有フォルダの閲覧・アップロード・移動・管理を行います。",
+      "path": "/apps/filemanager/",
+      "icon": "folder"
+    },
+    {
+      "id": "workstats",
+      "name": "稼働統計ビューア（拡張枠）",
+      "description": "日次CSVデータの集計・カレンダー表示・Excel出力を行います。",
+      "path": "/apps/workstats/",
+      "icon": "chart"
+    }
+  ]
+}

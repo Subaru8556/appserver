@@ -1,0 +1,567 @@
+﻿<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>ファイル管理 - 業務ポータル</title>
+  <link rel="stylesheet" href="/shared/vibe.css">
+  <script src="/shared/lifecycle.js"></script>
+  <style>
+    .toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .toolbar-group { display: flex; gap: 8px; align-items: center; }
+    .item-link {
+      color: var(--vibe-text-main);
+      text-decoration: none;
+      font-weight: 500;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+    }
+    .item-link:hover { color: var(--vibe-primary); text-decoration: underline; }
+    .sort-indicator { display: inline-block; width: 14px; text-align: center; color: var(--vibe-primary); }
+    .cybozu-dir-list {
+      border: 1px solid var(--vibe-border);
+      border-radius: var(--vibe-radius-sm);
+      max-height: 260px;
+      overflow-y: auto;
+      background: #fafbfc;
+    }
+    .cybozu-dir-item {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--vibe-border-light);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--vibe-primary);
+      font-weight: 500;
+    }
+    .cybozu-dir-item:hover { background: var(--vibe-primary-bg); text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <!-- ヘッダー -->
+  <header class="vibe-header">
+    <div style="display:flex; align-items:center; gap: 16px;">
+      <a id="backToPortalBtn" href="/" class="vibe-btn vibe-btn-sm">← ポータルへ戻る</a>
+      <span class="vibe-header-title">📁 ファイル管理</span>
+    </div>
+    <div style="font-size: 12px; color: var(--vibe-text-sub);">
+      <!-- 領域内にファイルをドラッグ＆ドロップしてアップロードできます -->
+    </div>
+  </header>
+
+  <!-- メインコンテンツ -->
+  <main class="vibe-container">
+    <div id="dropZone" class="vibe-card">
+      <!-- パンくずリスト -->
+      <nav id="breadcrumbs" class="vibe-breadcrumbs"></nav>
+
+      <!-- ツールバー -->
+      <div class="toolbar">
+        <div class="toolbar-group">
+          <button class="vibe-btn vibe-btn-primary" onclick="document.getElementById('fileInput').click()">
+            ＋ ファイルアップロード
+          </button>
+          <input type="file" id="fileInput" multiple style="display:none" onchange="handleFileSelect(this.files)">
+          <button class="vibe-btn" onclick="openMkdirModal()">＋ フォルダ作成</button>
+        </div>
+        <div class="toolbar-group">
+          <button id="btnMoveSelected" class="vibe-btn" disabled onclick="openMoveModal()">
+            選択したファイルを移動 (<span id="selectedCount">0</span>)
+          </button>
+        </div>
+      </div>
+
+      <!-- ファイル一覧テーブル -->
+      <div class="vibe-table-wrapper">
+        <table class="vibe-table">
+          <thead>
+            <tr>
+              <th style="width: 36px; text-align:center;" onclick="event.stopPropagation()">
+                <input type="checkbox" id="checkAll" onchange="toggleSelectAll(this.checked)">
+              </th>
+              <th onclick="changeSort('name')">名前 <span id="sort-name" class="sort-indicator">▲</span></th>
+              <th style="width: 180px;" onclick="changeSort('timestamp')">更新日時 <span id="sort-timestamp" class="sort-indicator"></span></th>
+              <th style="width: 120px; text-align:right;" onclick="changeSort('size')">サイズ <span id="sort-size" class="sort-indicator"></span></th>
+              <th style="width: 180px; text-align:right; cursor:default;">操作</th>
+            </tr>
+          </thead>
+          <tbody id="fileTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <!-- ⑤ ディレクトリ作成モーダル -->
+  <div id="mkdirModal" class="vibe-modal-backdrop">
+    <div class="vibe-modal">
+      <div class="vibe-modal-header">
+        <span>新規フォルダ作成</span>
+        <button class="vibe-btn vibe-btn-sm" onclick="closeModal('mkdirModal')">✕</button>
+      </div>
+      <div class="vibe-modal-body">
+        <label style="display:block; margin-bottom:6px; font-weight:600;">フォルダ名</label>
+        <input type="text" id="newFolderName" class="vibe-input" placeholder="新しいフォルダ" onkeydown="if(event.key==='Enter') submitMkdir()">
+      </div>
+      <div class="vibe-modal-footer">
+        <button class="vibe-btn" onclick="closeModal('mkdirModal')">キャンセル</button>
+        <button class="vibe-btn vibe-btn-primary" onclick="submitMkdir()">作成する</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ④ サイボウズ風 ファイル移動モーダル -->
+  <div id="moveModal" class="vibe-modal-backdrop">
+    <div class="vibe-modal">
+      <div class="vibe-modal-header">
+        <span>ファイルの移動先フォルダを選択</span>
+        <button class="vibe-btn vibe-btn-sm" onclick="closeModal('moveModal')">✕</button>
+      </div>
+      <div class="vibe-modal-body">
+        <p style="font-size:12px; color:var(--vibe-text-sub); margin-bottom:8px;">
+          フォルダ名をクリックして階層を移動し、移動先で「ここに移動する」を押してください。
+        </p>
+        <div id="moveBreadcrumbs" class="vibe-breadcrumbs" style="padding:8px; background:#f5f7fa; border-radius:4px;"></div>
+        <div id="moveDirList" class="cybozu-dir-list"></div>
+      </div>
+      <div class="vibe-modal-footer">
+        <button class="vibe-btn" onclick="closeModal('moveModal')">キャンセル</button>
+        <button class="vibe-btn vibe-btn-primary" onclick="executeMove()">ここに移動する</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ③・④ 同名ファイル競合確認モーダル -->
+  <div id="conflictModal" class="vibe-modal-backdrop">
+    <div class="vibe-modal">
+      <div class="vibe-modal-header">
+        <span>同名ファイルの確認</span>
+      </div>
+      <div class="vibe-modal-body">
+        <p style="margin-bottom: 12px;">
+          保存先に同じ名前のファイル <strong id="conflictFileName" style="color:var(--vibe-danger);"></strong> が既に存在します。処理を選択してください。
+        </p>
+      </div>
+      <div class="vibe-modal-footer">
+        <button class="vibe-btn" id="btnConflictCancel">キャンセル</button>
+        <button class="vibe-btn" id="btnConflictRename">別名で保存 (リネーム)</button>
+        <button class="vibe-btn vibe-btn-primary" id="btnConflictOverwrite">置き換える (上書き)</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  // アプリケーション状態
+  let currentPath = "";
+  let currentItems = [];
+  let sortKey = "name";
+  let sortAsc = true;
+  let selectedFiles = new Set();
+  let moveTargetDir = "";
+
+  // 初期化 & ブラウザの戻る/進むボタン連動 (要望①)
+  window.addEventListener('DOMContentLoaded', () => {
+    const params = new URLSearchParams(window.location.search);
+
+    // 単体起動モードの判定（「← ポータルへ戻る」ボタンを非表示にする）
+    if (params.get('standalone') === '1') sessionStorage.setItem('standalone', '1');
+    if (sessionStorage.getItem('standalone') === '1') {
+      document.getElementById('backToPortalBtn').style.display = 'none';
+    }
+
+    const initialPath = params.get('path') || "";
+    navigateTo(initialPath, false);
+    setupDragAndDrop();
+  });
+
+  window.addEventListener('popstate', () => {
+    const params = new URLSearchParams(window.location.search);
+    navigateTo(params.get('path') || "", false);
+  });
+
+  // パス階層移動とURLクエリ更新 (要望①)
+  async function navigateTo(relPath, pushHistory = true) {
+    relPath = relPath.replace(/^\/+|\/+$/g, '');
+    if (pushHistory) {
+      const url = relPath ? `?path=${encodeURIComponent(relPath)}` : window.location.pathname;
+      window.history.pushState({ path: relPath }, "", url);
+    }
+    currentPath = relPath;
+    selectedFiles.clear();
+    updateSelectionUI();
+    await loadDirectory();
+  }
+
+  // APIから一覧を取得
+  async function loadDirectory() {
+    const res = await fetch(`/api/filemanager/list?path=${encodeURIComponent(currentPath)}`);
+    const data = await res.json();
+    if (!res.ok) {
+      alert(data.error || "読み込みエラー");
+      return;
+    }
+    currentItems = data.items || [];
+    renderBreadcrumbs();
+    renderTable();
+  }
+
+  // パンくずリスト描画
+  function renderBreadcrumbs() {
+    const nav = document.getElementById('breadcrumbs');
+    const parts = currentPath ? currentPath.split('/') : [];
+    let html = `<a href="?path=" onclick="event.preventDefault(); navigateTo('')">🏠 ルート</a>`;
+    let acc = "";
+    parts.forEach((part, idx) => {
+      acc = acc ? `${acc}/${part}` : part;
+      html += `<span class="sep">/</span>`;
+      if (idx === parts.length - 1) {
+        html += `<span style="font-weight:700;">${escapeHtml(part)}</span>`;
+      } else {
+        html += `<a href="?path=${encodeURIComponent(acc)}" onclick="event.preventDefault(); navigateTo('${escapeJs(acc)}')">${escapeHtml(part)}</a>`;
+      }
+    });
+    nav.innerHTML = html;
+  }
+
+  // ソート切り替え (要望②: エクスプローラー風 フォルダ優先＋昇順/降順)
+  function changeSort(key) {
+    if (sortKey === key) {
+      sortAsc = !sortAsc;
+    } else {
+      sortKey = key;
+      sortAsc = true;
+    }
+    ['name', 'timestamp', 'size'].forEach(k => {
+      const el = document.getElementById(`sort-${k}`);
+      el.textContent = (k === sortKey) ? (sortAsc ? '▲' : '▼') : '';
+    });
+    renderTable();
+  }
+
+  // テーブル描画
+  function renderTable() {
+    const tbody = document.getElementById('fileTableBody');
+    document.getElementById('checkAll').checked = false;
+
+    const sorted = [...currentItems].sort((a, b) => {
+      // Windowsエクスプローラー同様、フォルダを常に上部に配置
+      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+      let valA = a[sortKey], valB = b[sortKey];
+      let cmp = 0;
+      if (typeof valA === 'string') {
+        cmp = valA.localeCompare(valB, 'ja', { numeric: true });
+      } else {
+        cmp = valA < valB ? -1 : (valA > valB ? 1 : 0);
+      }
+      return sortAsc ? cmp : -cmp;
+    });
+
+    if (sorted.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding: 32px; color: var(--vibe-text-sub);">このフォルダは空です</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = sorted.map(item => {
+      const itemRelPath = currentPath ? `${currentPath}/${item.name}` : item.name;
+      const isSelected = selectedFiles.has(item.name);
+
+      if (item.isDir) {
+        return `
+          <tr>
+            <td style="text-align:center;">-</td>
+            <td>
+              <a class="item-link" href="?path=${encodeURIComponent(itemRelPath)}" onclick="event.preventDefault(); navigateTo('${escapeJs(itemRelPath)}')">
+                <span>📁</span> <span>${escapeHtml(item.name)}</span>
+              </a>
+            </td>
+            <td>${item.lastModified}</td>
+            <td style="text-align:right; color:var(--vibe-text-sub);">-</td>
+            <td style="text-align:right;">
+              <button class="vibe-btn vibe-btn-sm vibe-btn-danger" onclick="deleteDirectory('${escapeJs(itemRelPath)}', '${escapeJs(item.name)}')">削除</button>
+            </td>
+          </tr>
+        `;
+      } else {
+        return `
+          <tr class="${isSelected ? 'selected' : ''}">
+            <td style="text-align:center;">
+              <input type="checkbox" class="file-check" value="${escapeHtml(item.name)}" ${isSelected ? 'checked' : ''} onchange="toggleFileSelect('${escapeJs(item.name)}', this.checked)">
+            </td>
+            <td>
+              <span class="item-link" onclick="downloadFile('${escapeJs(itemRelPath)}')">
+                <span>📄</span> <span>${escapeHtml(item.name)}</span>
+              </span>
+            </td>
+            <td>${item.lastModified}</td>
+            <td style="text-align:right;">${formatBytes(item.size)}</td>
+            <td style="text-align:right;">
+              <button class="vibe-btn vibe-btn-sm" onclick="downloadFile('${escapeJs(itemRelPath)}')">DL</button>
+              <button class="vibe-btn vibe-btn-sm vibe-btn-danger" onclick="deleteFile('${escapeJs(itemRelPath)}', '${escapeJs(item.name)}')">削除</button>
+            </td>
+          </tr>
+        `;
+      }
+    }).join('');
+  }
+
+  // ① ファイルダウンロード (ブラウザ標準のダウンロードフォルダへ同名保存)
+  function downloadFile(relPath) {
+    const a = document.createElement('a');
+    a.href = `/api/filemanager/download?path=${encodeURIComponent(relPath)}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  // ② ファイル削除
+  async function deleteFile(relPath, name) {
+    if (!confirm(`ファイル「${name}」を削除してもよろしいですか？`)) return;
+    const res = await fetch('/api/filemanager/delete-file', {
+      method: 'POST',
+      body: JSON.stringify({ path: relPath })
+    });
+    const data = await res.json();
+    if (!res.ok) alert(data.error || "削除に失敗しました");
+    await loadDirectory();
+  }
+
+  // ⑥ ディレクトリ削除 (ファイルが存在する場合はバックエンド側で中断＆エラー返却)
+  async function deleteDirectory(relPath, name) {
+    if (!confirm(`フォルダ「${name}」を削除しますか？\n（※フォルダ内にファイルが存在する場合は中断されます）`)) return;
+    const res = await fetch('/api/filemanager/rmdir', {
+      method: 'POST',
+      body: JSON.stringify({ path: relPath })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      alert(data.error);
+      return;
+    }
+    await loadDirectory();
+  }
+
+  // ⑤ ディレクトリ作成
+  function openMkdirModal() {
+    document.getElementById('newFolderName').value = "";
+    document.getElementById('mkdirModal').classList.add('active');
+    setTimeout(() => document.getElementById('newFolderName').focus(), 50);
+  }
+
+  async function submitMkdir() {
+    const name = document.getElementById('newFolderName').value.trim();
+    if (!name) return;
+    const res = await fetch('/api/filemanager/mkdir', {
+      method: 'POST',
+      body: JSON.stringify({ dir: currentPath, name })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      alert(data.error || "フォルダ作成エラー");
+      return;
+    }
+    closeModal('mkdirModal');
+    await loadDirectory();
+  }
+
+  // ③ ファイルアップロード & ドラッグアンドドロップ & 同名ファイル確認
+  function setupDragAndDrop() {
+    const dz = document.getElementById('dropZone');
+    dz.addEventListener('dragover', e => {
+      e.preventDefault();
+      dz.classList.add('drop-zone-active');
+    });
+    dz.addEventListener('dragleave', e => {
+      if (!dz.contains(e.relatedTarget)) dz.classList.remove('drop-zone-active');
+    });
+    dz.addEventListener('drop', async e => {
+      e.preventDefault();
+      dz.classList.remove('drop-zone-active');
+      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        await handleFileSelect(e.dataTransfer.files);
+      }
+    });
+  }
+
+  async function handleFileSelect(fileList) {
+    const files = Array.from(fileList);
+    if (files.length === 0) return;
+
+    // 事前重複チェック
+    const checkRes = await fetch('/api/filemanager/check-exists', {
+      method: 'POST',
+      body: JSON.stringify({ dir: currentPath, names: files.map(f => f.name) })
+    });
+    const { conflicts } = await checkRes.json();
+    const conflictSet = new Set(conflicts || []);
+
+    for (const file of files) {
+      let mode = "normal";
+      if (conflictSet.has(file.name)) {
+        mode = await askConflictResolution(file.name);
+        if (mode === "cancel") continue;
+      }
+      await fetch(`/api/filemanager/upload?dir=${encodeURIComponent(currentPath)}&name=${encodeURIComponent(file.name)}&mode=${mode}`, {
+        method: 'POST',
+        body: file
+      });
+    }
+    document.getElementById('fileInput').value = "";
+    await loadDirectory();
+  }
+
+  // 同名ファイル確認ダイアログをPromiseで制御
+  function askConflictResolution(fileName) {
+    return new Promise(resolve => {
+      document.getElementById('conflictFileName').textContent = `「${fileName}」`;
+      const modal = document.getElementById('conflictModal');
+      modal.classList.add('active');
+
+      const cleanup = (choice) => {
+        modal.classList.remove('active');
+        resolve(choice);
+      };
+      document.getElementById('btnConflictCancel').onclick = () => cleanup('cancel');
+      document.getElementById('btnConflictRename').onclick = () => cleanup('rename');
+      document.getElementById('btnConflictOverwrite').onclick = () => cleanup('overwrite');
+    });
+  }
+
+  // 複数選択管理
+  function toggleFileSelect(name, checked) {
+    if (checked) selectedFiles.add(name);
+    else selectedFiles.delete(name);
+    updateSelectionUI();
+    renderTable();
+  }
+
+  function toggleSelectAll(checked) {
+    currentItems.filter(i => !i.isDir).forEach(i => {
+      if (checked) selectedFiles.add(i.name);
+      else selectedFiles.delete(i.name);
+    });
+    updateSelectionUI();
+    renderTable();
+  }
+
+  function updateSelectionUI() {
+    document.getElementById('selectedCount').textContent = selectedFiles.size;
+    document.getElementById('btnMoveSelected').disabled = selectedFiles.size === 0;
+  }
+
+  // ④ サイボウズ風 ファイル移動モーダル操作
+  async function openMoveModal() {
+    moveTargetDir = currentPath;
+    document.getElementById('moveModal').classList.add('active');
+    await loadMoveModalDir(moveTargetDir);
+  }
+
+  async function loadMoveModalDir(relPath) {
+    moveTargetDir = relPath.replace(/^\/+|\/+$/g, '');
+    const res = await fetch(`/api/filemanager/list?path=${encodeURIComponent(moveTargetDir)}&dirsOnly=true`);
+    const data = await res.json();
+
+    // モーダル内パンくず描画
+    const parts = moveTargetDir ? moveTargetDir.split('/') : [];
+    let bHtml = `<a href="#" onclick="event.preventDefault(); loadMoveModalDir('')">🏠 ルート</a>`;
+    let acc = "";
+    parts.forEach(p => {
+      acc = acc ? `${acc}/${p}` : p;
+      bHtml += `<span class="sep">/</span><a href="#" onclick="event.preventDefault(); loadMoveModalDir('${escapeJs(acc)}')">${escapeHtml(p)}</a>`;
+    });
+    document.getElementById('moveBreadcrumbs').innerHTML = bHtml;
+
+    // モーダル内ディレクトリ一覧描画
+    const listEl = document.getElementById('moveDirList');
+    let listHtml = "";
+    if (moveTargetDir !== "") {
+      const parentPath = parts.slice(0, -1).join('/');
+      listHtml += `<div class="cybozu-dir-item" onclick="loadMoveModalDir('${escapeJs(parentPath)}')">⬆️ 上の階層へ（..）</div>`;
+    }
+    const dirs = data.items || [];
+    if (dirs.length === 0 && listHtml === "") {
+      listHtml = `<div style="padding:16px; color:var(--vibe-text-sub); text-align:center;">サブフォルダはありません</div>`;
+    } else {
+      listHtml += dirs.map(d => {
+        const nextPath = moveTargetDir ? `${moveTargetDir}/${d.name}` : d.name;
+        return `<div class="cybozu-dir-item" onclick="loadMoveModalDir('${escapeJs(nextPath)}')">📁 ${escapeHtml(d.name)}</div>`;
+      }).join('');
+    }
+    listEl.innerHTML = listHtml;
+  }
+
+  async function executeMove() {
+    if (moveTargetDir === currentPath) {
+      alert("移動元と同じフォルダが選択されています。別の階層を選択してください。");
+      return;
+    }
+    const files = Array.from(selectedFiles);
+
+    // 移動先の同名ファイルチェック
+    const checkRes = await fetch('/api/filemanager/check-exists', {
+      method: 'POST',
+      body: JSON.stringify({ dir: moveTargetDir, names: files })
+    });
+    const { conflicts } = await checkRes.json();
+    const resolutions = {};
+
+    for (const cName of (conflicts || [])) {
+      const choice = await askConflictResolution(cName);
+      resolutions[cName] = choice;
+    }
+
+    const moveRes = await fetch('/api/filemanager/move', {
+      method: 'POST',
+      body: JSON.stringify({
+        sourceDir: currentPath,
+        targetDir: moveTargetDir,
+        files: files,
+        resolutions: resolutions
+      })
+    });
+    if (!moveRes.ok) {
+      alert("移動処理中にエラーが発生しました。");
+    }
+    closeModal('moveModal');
+    selectedFiles.clear();
+    updateSelectionUI();
+    await loadDirectory();
+  }
+
+  function closeModal(id) {
+    document.getElementById(id).classList.remove('active');
+  }
+
+  // ユーティリティ関数
+  function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024, sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  }
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
+  }
+  function escapeJs(str) {
+    return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  }
+
+  async function shutdownApp() {
+    if (!confirm("アプリケーション（ローカルサーバ）を終了しますか？")) return;
+    try {
+      await fetch('/api/system/shutdown');
+    } catch (e) {}
+    window.close();
+    // 通常のブラウザタブで開いていて window.close() が効かない場合の表示
+    document.body.innerHTML = '<div style="display:flex;height:100vh;align-items:center;justify-content:center;font-family:sans-serif;color:#666;">サーバを停止しました。このウィンドウを閉じてください。</div>';
+  }
+</script>
+</body>
+</html>
